@@ -1,4 +1,11 @@
-import { COURT, type Direction, type MatchPhase, type MatchSnapshot, type Side } from "../shared/protocol.js";
+import {
+  COURT,
+  type Direction,
+  type MatchPhase,
+  type MatchSnapshot,
+  type PlayerSnapshot,
+  type Side,
+} from "../shared/protocol.js";
 
 export interface SimulationPlayer {
   id: string;
@@ -183,9 +190,18 @@ export function snapshot(state: SimulationState, serverTime = Date.now()): Match
     serverTime,
     phase: state.phase,
     phaseEndsAt: state.phaseEndsAt,
-    left: { ...state.left },
-    right: { ...state.right },
+    left: playerSnapshot(state.left),
+    right: playerSnapshot(state.right),
     ball: { ...state.ball },
     score: { ...state.score },
+  };
+}
+
+function playerSnapshot(player: SimulationPlayer): PlayerSnapshot {
+  return {
+    y: player.y,
+    direction: player.direction,
+    connected: player.connected,
+    lastProcessedInput: player.lastProcessedInput,
   };
 }

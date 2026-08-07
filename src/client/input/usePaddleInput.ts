@@ -5,7 +5,10 @@ import { gameBridge } from "../network/gameBridge";
 const UP_KEYS = new Set(["w", "arrowup"]);
 const DOWN_KEYS = new Set(["s", "arrowdown"]);
 
-export function usePaddleInput(active: boolean, send: (direction: Direction, sequence: number) => void): void {
+export function usePaddleInput(
+  active: boolean,
+  send: (direction: Direction, sequence: number) => void,
+): void {
   const sequence = useRef(0);
   const current = useRef<Direction>(0);
 
@@ -18,7 +21,7 @@ export function usePaddleInput(active: boolean, send: (direction: Direction, seq
       if (direction === current.current) return;
       current.current = direction;
       sequence.current += 1;
-      gameBridge.setDirection(direction);
+      gameBridge.recordInput(direction, sequence.current);
       send(direction, sequence.current);
     };
     const keyDown = (event: KeyboardEvent) => {
@@ -39,7 +42,7 @@ export function usePaddleInput(active: boolean, send: (direction: Direction, seq
       if (current.current !== 0) {
         current.current = 0;
         sequence.current += 1;
-        gameBridge.setDirection(0);
+        gameBridge.recordInput(0, sequence.current);
         send(0, sequence.current);
       }
     };

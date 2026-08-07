@@ -16,6 +16,7 @@ import {
   type Side,
   type SocketData,
 } from "../shared/protocol.js";
+import { fixedStepBatch } from "./fixedStep.js";
 import { applyInput, createSimulation, snapshot, stepSimulation, type SimulationState } from "./simulation.js";
 
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
@@ -52,6 +53,9 @@ interface Match {
   rematchRequests: Set<Side>;
   ended: MatchEnded | null;
   cleanupTimer: NodeJS.Timeout | null;
+  loopStartedAt: number;
+  loopAccumulatorMs: number;
+  lastSnapshotTick: number;
 }
 
 interface MultiplayerOptions {
@@ -273,7 +277,7 @@ export class MultiplayerServer {
     session.inputCount += 1;
     if (session.inputCount > 120) return;
     const match = this.matches.get(session.matchId);
-    if (!match || match.ended || match.disconnected.size > 0) return;
+    if (!match || match.ended) return;
     applyInput(match.simulation, session.side, parsed.data.direction, parsed.data.sequence);
   }
 
@@ -328,6 +332,7 @@ export class MultiplayerServer {
       match.remainingBeforePause = match.simulation.phaseRemainingMs;
       match.simulation.phase = "paused";
       match.simulation.phaseEndsAt = null;
+      this.stopMatchLoop(match);
     }
     const deadline = Date.now() + this.reconnectGraceMs;
     this.io.to(match.id).emit("match:paused", {
@@ -356,6 +361,9 @@ export class MultiplayerServer {
       rematchRequests: new Set(),
       ended: null,
       cleanupTimer: null,
+      loopStartedAt: 0,
+      loopAccumulatorMs: 0,
+      lastSnapshotTick: 0,
     };
     this.matches.set(id, match);
     this.attachToMatch(left, match, "left");
@@ -368,17 +376,49 @@ export class MultiplayerServer {
 
   private startMatchLoop(match: Match): void {
     this.stopMatchLoop(match);
+    const stepMs = 1000 / COURT.tickRate;
     const snapshotEvery = COURT.tickRate / COURT.snapshotRate;
-    match.loop = setInterval(() => {
+    const maxCatchUpSteps = 5;
+    match.loopStartedAt = performance.now();
+    match.loopAccumulatorMs = 0;
+    match.lastSnapshotTick = match.simulation.tick;
+
+    const run = () => {
       if (match.ended) return;
-      stepSimulation(match.simulation, 1 / COURT.tickRate);
-      if (match.simulation.tick % snapshotEvery === 0) {
-        this.io.to(match.id).emit("match:snapshot", snapshot(match.simulation));
+      const now = performance.now();
+      const batch = fixedStepBatch(
+        match.loopAccumulatorMs,
+        now - match.loopStartedAt,
+        stepMs,
+        maxCatchUpSteps,
+      );
+      match.loopStartedAt = now;
+      match.loopAccumulatorMs = batch.remainingMs;
+
+      for (let step = 0; step < batch.steps && !match.ended; step += 1) {
+        stepSimulation(match.simulation, 1 / COURT.tickRate);
+        if (match.simulation.phase === "finished" && match.simulation.winner) {
+          this.finishMatch(match, match.simulation.winner, "score");
+        }
       }
-      if (match.simulation.phase === "finished" && match.simulation.winner) {
-        this.finishMatch(match, match.simulation.winner, "score");
+
+      if (
+        !match.ended &&
+        match.simulation.tick - match.lastSnapshotTick >= snapshotEvery
+      ) {
+        this.io
+          .to(match.id)
+          .volatile.emit("match:snapshot", snapshot(match.simulation));
+        match.lastSnapshotTick = match.simulation.tick;
       }
-    }, 1000 / COURT.tickRate);
+
+      if (!match.ended) {
+        const untilNextStep = Math.max(0, stepMs - match.loopAccumulatorMs);
+        match.loop = setTimeout(run, untilNextStep);
+      }
+    };
+
+    match.loop = setTimeout(run, stepMs);
   }
 
   private finishMatch(match: Match, winner: Side, reason: MatchEnded["reason"]): void {
@@ -430,6 +470,7 @@ export class MultiplayerServer {
       : null;
     match.phaseBeforePause = null;
     this.io.to(match.id).emit("match:resumed");
+    this.startMatchLoop(match);
   }
 
   private attachToMatch(session: Session, match: Match, side: Side): void {
@@ -441,12 +482,15 @@ export class MultiplayerServer {
 
   private emitMatchReady(session: Session, match: Match): void {
     if (!session.socketId || !session.side) return;
-    const opponentId = session.side === "left" ? match.rightId : match.leftId;
-    const opponent = this.sessions.get(opponentId)!;
+    const left = this.sessions.get(match.leftId)!;
+    const right = this.sessions.get(match.rightId)!;
     this.io.to(session.socketId).emit("match:ready", {
       matchId: match.id,
       side: session.side,
-      opponent: opponent.nickname,
+      players: {
+        left: { id: left.id, nickname: left.nickname },
+        right: { id: right.id, nickname: right.nickname },
+      },
     });
   }
 
@@ -467,7 +511,7 @@ export class MultiplayerServer {
   }
 
   private stopMatchLoop(match: Match): void {
-    if (match.loop) clearInterval(match.loop);
+    if (match.loop) clearTimeout(match.loop);
     match.loop = null;
   }
 

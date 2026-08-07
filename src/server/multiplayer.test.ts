@@ -1,7 +1,7 @@
 import { createServer, type Server as HttpServer } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { io as createClient, type Socket } from "socket.io-client";
-import type { ClientToServerEvents, MatchEnded, MatchReady, PausedState, ServerToClientEvents, SessionInfo } from "../shared/protocol.js";
+import type { ClientToServerEvents, MatchEnded, MatchReady, MatchSnapshot, PausedState, ServerToClientEvents, SessionInfo } from "../shared/protocol.js";
 import { MultiplayerServer } from "./multiplayer.js";
 
 type TestClient = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -14,7 +14,7 @@ describe("multiplayer server", () => {
 
   beforeEach(async () => {
     httpServer = createServer();
-    multiplayer = new MultiplayerServer(httpServer, { reconnectGraceMs: 90, privateRoomLifetimeMs: 500 });
+    multiplayer = new MultiplayerServer(httpServer, { reconnectGraceMs: 250, privateRoomLifetimeMs: 500 });
     await new Promise<void>((resolve, reject) => {
       httpServer.once("error", reject);
       httpServer.listen(0, "127.0.0.1", () => {
@@ -42,7 +42,9 @@ describe("multiplayer server", () => {
     const hostReady = once<MatchReady>(host, "match:ready");
     const guestReady = once<MatchReady>(guest, "match:ready");
     await new Promise<void>((resolve, reject) => guest.emit("room:join", { code }, (result) => result.ok ? resolve() : reject(result.error)));
-    expect((await hostReady).side).toBe("left");
+    const ready = await hostReady;
+    expect(ready.side).toBe("left");
+    expect(ready.players.left.nickname).toBe("Laser");
     expect((await guestReady).side).toBe("right");
   });
 
@@ -55,8 +57,8 @@ describe("multiplayer server", () => {
     const secondReady = once<MatchReady>(second, "match:ready");
     await ack(first, "queue:join");
     await ack(second, "queue:join");
-    expect((await firstReady).opponent).toBe("Beta");
-    expect((await secondReady).opponent).toBe("Alpha");
+    expect((await firstReady).players.right.nickname).toBe("Beta");
+    expect((await secondReady).players.left.nickname).toBe("Alpha");
   });
 
   it("rejects unknown private room codes", async () => {
@@ -113,6 +115,43 @@ describe("multiplayer server", () => {
     expect(result.winnerName).toBe("Stay");
   });
 
+  it("does not publish periodic snapshots while a match is paused", async () => {
+    const first = await connect();
+    const second = await connect();
+    await register(first, "Still");
+    await register(second, "Paused");
+    let snapshots = 0;
+    first.on("match:snapshot", () => {
+      snapshots += 1;
+    });
+    const ready = once<MatchReady>(first, "match:ready");
+    await ack(first, "queue:join");
+    await ack(second, "queue:join");
+    await ready;
+    const paused = once<PausedState>(first, "match:paused");
+    second.disconnect();
+    await paused;
+    await delay(30);
+    const countAfterPause = snapshots;
+    await delay(100);
+    expect(snapshots).toBe(countAfterPause);
+  });
+
+  it("keeps player identity out of repeated snapshots", async () => {
+    const first = await connect();
+    const second = await connect();
+    await register(first, "Compact");
+    await register(second, "Payload");
+    const nextSnapshot = once<MatchSnapshot>(first, "match:snapshot");
+    await ack(first, "queue:join");
+    await ack(second, "queue:join");
+    const state = await nextSnapshot;
+    expect(state.left).not.toHaveProperty("id");
+    expect(state.left).not.toHaveProperty("nickname");
+    expect(state.right).not.toHaveProperty("id");
+    expect(state.right).not.toHaveProperty("nickname");
+  });
+
   it("starts a fresh countdown when both players accept a rematch", async () => {
     const first = await connect();
     const second = await connect();
@@ -140,8 +179,8 @@ describe("multiplayer server", () => {
     const replayForSecond = once<MatchReady>(replacement, "match:ready");
     await ack(first, "match:rematch");
     await ack(replacement, "match:rematch");
-    expect((await replayForFirst).opponent).toBe("Encore");
-    expect((await replayForSecond).opponent).toBe("Again");
+    expect((await replayForFirst).players.right.nickname).toBe("Encore");
+    expect((await replayForSecond).players.left.nickname).toBe("Again");
   });
 
   async function connect(token?: string): Promise<TestClient> {
@@ -163,4 +202,8 @@ async function ack(client: TestClient, event: "queue:join" | "queue:leave" | "ma
 
 function once<T>(client: TestClient, event: string): Promise<T> {
   return new Promise((resolve) => client.once(event as never, resolve as never));
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

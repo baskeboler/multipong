@@ -30,7 +30,13 @@ class ArcadeSound {
     this.tone(520, 0.08, "triangle", 0.025, 660);
   }
 
-  private tone(frequency: number, duration: number, type: OscillatorType, volume: number, endFrequency?: number): void {
+  private tone(
+    frequency: number,
+    duration: number,
+    type: OscillatorType,
+    volume: number,
+    endFrequency?: number,
+  ): void {
     if (this.muted) return;
     this.unlock();
     const context = this.context;
@@ -39,9 +45,16 @@ class ArcadeSound {
     const gain = context.createGain();
     oscillator.type = type;
     oscillator.frequency.setValueAtTime(frequency, context.currentTime);
-    if (endFrequency) oscillator.frequency.exponentialRampToValueAtTime(endFrequency, context.currentTime + duration);
+    if (endFrequency)
+      oscillator.frequency.exponentialRampToValueAtTime(
+        endFrequency,
+        context.currentTime + duration,
+      );
     gain.gain.setValueAtTime(volume, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      context.currentTime + duration,
+    );
     oscillator.connect(gain).connect(context.destination);
     oscillator.start();
     oscillator.stop(context.currentTime + duration);

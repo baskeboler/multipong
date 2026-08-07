@@ -13,7 +13,7 @@ export const COURT = {
   ballAcceleration: 1.045,
   winningScore: 7,
   tickRate: 60,
-  snapshotRate: 20,
+  snapshotRate: 30,
   reconnectGraceMs: 20_000,
   countdownMs: 3_000,
   pointPauseMs: 1_000,
@@ -24,12 +24,15 @@ export type MatchPhase = "countdown" | "playing" | "point" | "paused" | "finishe
 export type Direction = -1 | 0 | 1;
 
 export interface PlayerSnapshot {
-  id: string;
-  nickname: string;
   y: number;
   direction: Direction;
   connected: boolean;
   lastProcessedInput: number;
+}
+
+export interface MatchPlayer {
+  id: string;
+  nickname: string;
 }
 
 export interface BallSnapshot {
@@ -67,7 +70,7 @@ export interface LobbyState {
 export interface MatchReady {
   matchId: string;
   side: Side;
-  opponent: string;
+  players: Record<Side, MatchPlayer>;
 }
 
 export interface MatchEnded {

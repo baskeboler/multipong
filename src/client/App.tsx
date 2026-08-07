@@ -1,15 +1,28 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { arcadeSound } from "./audio/arcadeSound";
 import { usePaddleInput } from "./input/usePaddleInput";
-import { savedNickname, useMultiplayer, type MultiplayerState } from "./network/useMultiplayer";
-import type { MatchSnapshot, Side } from "../shared/protocol";
+import {
+  savedNickname,
+  useMultiplayer,
+  type MatchStatus,
+  type MultiplayerState,
+} from "./network/useMultiplayer";
+import type { MatchPlayer, Side } from "../shared/protocol";
 
 const GameCanvas = lazy(() => import("./game/GameCanvas").then((module) => ({ default: module.GameCanvas })));
 
 export function App(): React.JSX.Element {
   const multiplayer = useMultiplayer();
   const [muted, setMuted] = useState(arcadeSound.isMuted());
-  usePaddleInput(Boolean(multiplayer.match && !multiplayer.ended && !multiplayer.paused), multiplayer.sendInput);
+  usePaddleInput(
+    Boolean(
+      multiplayer.connected &&
+        multiplayer.match &&
+        !multiplayer.ended &&
+        !multiplayer.paused,
+    ),
+    multiplayer.sendInput,
+  );
 
   return (
     <main className="app-shell">
@@ -148,17 +161,18 @@ function Lobby({ multiplayer }: { multiplayer: MultiplayerState }): React.JSX.El
 }
 
 function MatchView({ multiplayer }: { multiplayer: MultiplayerState }): React.JSX.Element {
-  const state = multiplayer.snapshot;
+  const state = multiplayer.status;
   const countdown = useCountdown(state);
   const yourSide = multiplayer.match!.side;
+  const players = multiplayer.match!.players;
   const resultText = multiplayer.ended?.winner === yourSide ? "Grid conquered" : "Run it back";
   const requested = multiplayer.rematch.requestedBy.includes(yourSide);
   return (
     <section className="match-page" data-testid="match-view">
       <div className="scoreboard">
-        <PlayerScore side="left" state={state} yours={yourSide === "left"} />
+        <PlayerScore player={players.left} side="left" state={state} yours={yourSide === "left"} />
         <div className="round-status"><span>{multiplayer.paused ? "SIGNAL HOLD" : state?.phase === "playing" ? "LIVE ROUND" : "STANDBY"}</span><small>FIRST TO 7</small></div>
-        <PlayerScore side="right" state={state} yours={yourSide === "right"} />
+        <PlayerScore player={players.right} side="right" state={state} yours={yourSide === "right"} />
       </div>
       <div className="court-frame"><Suspense fallback={<div className="canvas-loading">SYNCING COURT…</div>}><GameCanvas /></Suspense></div>
       <div className="match-controls"><span><kbd>W</kbd><kbd>S</kbd> MOVE</span><span className="latency-note">SERVER AUTHORITATIVE // 60 HZ</span><span><kbd>↑</kbd><kbd>↓</kbd> MOVE</span></div>
@@ -179,12 +193,11 @@ function MatchView({ multiplayer }: { multiplayer: MultiplayerState }): React.JS
   );
 }
 
-function PlayerScore({ side, state, yours }: { side: Side; state: MatchSnapshot | null; yours: boolean }): React.JSX.Element {
-  const player = state?.[side];
-  return <div className={`player-score ${side}`}><div><small>{yours ? "YOU" : "RIVAL"}</small><strong>{player?.nickname ?? "—"}</strong></div><b>{state?.score[side] ?? 0}</b></div>;
+function PlayerScore({ player, side, state, yours }: { player: MatchPlayer; side: Side; state: MatchStatus | null; yours: boolean }): React.JSX.Element {
+  return <div className={`player-score ${side}`}><div><small>{yours ? "YOU" : "RIVAL"}</small><strong>{player.nickname}</strong></div><b>{state?.score[side] ?? 0}</b></div>;
 }
 
-function useCountdown(state: MatchSnapshot | null): number | null {
+function useCountdown(state: MatchStatus | null): number | null {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (state?.phase !== "countdown" || !state.phaseEndsAt) return;

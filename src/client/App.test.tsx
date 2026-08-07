@@ -3,8 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { MultiplayerState } from "./network/useMultiplayer";
-import type { MatchSnapshot } from "../shared/protocol";
+import type { MatchStatus, MultiplayerState } from "./network/useMultiplayer";
 
 const state = vi.hoisted(() => ({ current: null as MultiplayerState | null }));
 
@@ -23,7 +22,7 @@ function baseState(): MultiplayerState {
     session: null,
     lobby: { mode: "idle", message: "Ready" },
     match: null,
-    snapshot: null,
+    status: null,
     paused: null,
     ended: null,
     rematch: { requestedBy: [], ready: false },
@@ -62,28 +61,30 @@ describe("Multipong React shell", () => {
   });
 
   it("renders the final score and sends a rematch request", () => {
-    const snapshot: MatchSnapshot = {
-      matchId: "match",
-      tick: 20,
-      serverTime: Date.now(),
+    const status: MatchStatus = {
       phase: "finished",
       phaseEndsAt: null,
-      left: { id: "1", nickname: "Nova", y: 270, direction: 0, connected: true, lastProcessedInput: 2 },
-      right: { id: "2", nickname: "Rival", y: 270, direction: 0, connected: true, lastProcessedInput: 1 },
-      ball: { x: 480, y: 270, velocityX: 0, velocityY: 0 },
       score: { left: 7, right: 4 },
+      connected: { left: true, right: true },
     };
     state.current = {
       ...baseState(),
       session: { playerId: "1", nickname: "Nova", sessionToken: "token", resumed: false },
-      match: { matchId: "match", side: "left", opponent: "Rival" },
-      snapshot,
-      ended: { matchId: "match", winner: "left", winnerName: "Nova", reason: "score", score: snapshot.score },
+      match: {
+        matchId: "match",
+        side: "left",
+        players: {
+          left: { id: "1", nickname: "Nova" },
+          right: { id: "2", nickname: "Rival" },
+        },
+      },
+      status,
+      ended: { matchId: "match", winner: "left", winnerName: "Nova", reason: "score", score: status.score },
     };
     render(<App />);
     expect(screen.getByText("Grid conquered")).toBeVisible();
     expect(screen.getByText(/Nova wins 7–4/)).toBeVisible();
     fireEvent.click(screen.getByTestId("rematch"));
-    expect(state.current.requestRematch).toHaveBeenCalledOnce();
+    expect(state.current!.requestRematch).toHaveBeenCalledOnce();
   });
 });
